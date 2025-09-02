@@ -1,4 +1,4 @@
-# Valiant Aerotech — Software Monorepo
+# Valiant Aerotech
 End-to-end stack for autonomous UAV missions in one place:
 - Planning
 - Integration

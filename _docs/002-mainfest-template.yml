@@ -1,0 +1,32 @@
+# missions/circular-perimeter-hotspots/manifest.yaml
+mission_id: circular-perimeter-hotspots
+title: Circular Perimeter Survey with Hotspot Detection
+last_updated: 2025-09-02
+
+planning:
+  commit: 9a1c4e2
+  artifacts:
+    - planning/missions/circular-perimeter-hotspots/brief.md
+    - planning/missions/circular-perimeter-hotspots/geometry.geojson
+    - planning/missions/circular-perimeter-hotspots/checklists/preflight.md
+
+integration:
+  commit: 3f72b11
+  artifacts:
+    - integration/exports/circular-perimeter-hotspots/2025-09-02/results.csv
+    - integration/exports/circular-perimeter-hotspots/2025-09-02/results.geojson
+    - integration/exports/circular-perimeter-hotspots/2025-09-02/export.README.md
+
+actuation:
+  commit: d8c0f44
+  artifacts:
+    - actuation/missions/circular-perimeter-hotspots/mission.lua
+    - actuation/missions/circular-perimeter-hotspots/sample.waypoints
+    - actuation/missions/circular-perimeter-hotspots/params.param
+
+notes:
+  hazards: planning/missions/circular-perimeter-hotspots/risks.md
+  sitl_scenario: sim/scenarios/circular-perimeter-hotspots.md
+
+# ------------------------------------------------------------------------
+# This is a sample of how we will structure a manifest file for a mission.
