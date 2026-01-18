@@ -8,8 +8,8 @@ local MAX_THROTTLE_THRESHOLD = 600  -- 60% (ArduPilot scales 0-1000)
 local MAX_CLIMB_RATE_CMS = 50       -- 50 cm/s (Gentle climb)
 
 -- Altitudes (meters)
-local ALT_LOW  = 0.0625
-local ALT_HIGH = 0.125
+local ALT_LOW  = 0.25
+local ALT_HIGH = 0.5
 
 local EMERGENCY_BUTTON_RC = 8
 local SWITCH_LOW_THRESHOLD = 1300
