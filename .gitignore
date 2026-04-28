@@ -1,2 +1,4 @@
 __pycache__/
 logs\raw_messages.csv
+integration\pipelines\*\common\__pycache__
+logs
