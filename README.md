@@ -1,6 +1,6 @@
 # Valiant Aerotech Codebase
 
-## Quick Version
+## Summary
 
 This repo holds the software used for the AEAC 2026 flight tasks.
 
