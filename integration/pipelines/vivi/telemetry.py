@@ -1,14 +1,8 @@
-"""MAVLink telemetry reader for Vivi.
+"""MAVLink telemetry helpers for Vivi target localization.
 
-This module converts live MAVLink messages into the Pose object used by the
-survey, localization, and reporting pipeline.
-
-Why this exists
----------------
-The operator should not manually type x, y, z, yaw, pitch, and roll during the
-mission. Mission Planner / MAVProxy already receives those values from the
-vehicle. This module listens to the forwarded MAVLink stream and keeps the
-latest usable pose ready for main.py.
+The localization pipeline needs the vehicle pose at the instant a target is
+marked. This module listens to the forwarded MAVLink stream and keeps the latest
+usable pose ready for main.py.
 
 Coordinate conventions
 ----------------------
@@ -27,10 +21,12 @@ Therefore we convert:
     north = x_ned
     up    = -z_ned
 
-MAVLink ATTITUDE uses radians. We convert:
-    yaw   -> heading degrees clockwise from north
-    pitch -> degrees, nose-up positive
-    roll  -> degrees, positive right-side-down/right-bank
+For height, real tests showed that LOCAL_POSITION_NED.z can remain zero on some
+setups. To avoid all target heights becoming zero, this module now combines the
+best available horizontal source with the best available vertical source:
+    1. GLOBAL_POSITION_INT.relative_alt when available;
+    2. VFR_HUD.alt relative to its first observed value;
+    3. LOCAL_POSITION_NED.z only as a fallback.
 """
 
 from __future__ import annotations
@@ -48,15 +44,7 @@ from .vector import Vec3
 
 @dataclass
 class TelemetrySnapshot:
-    """Latest decoded telemetry values.
-
-    position_enu:
-        Vehicle position in the same local ENU frame used by the geometry code.
-    yaw_deg/pitch_deg/roll_deg:
-        Vehicle attitude in degrees.
-    source:
-        The message source used for position, usually LOCAL_POSITION_NED or GPS.
-    """
+    """Latest decoded telemetry values."""
 
     position_enu: Optional[Vec3] = None
     yaw_deg: Optional[float] = None
@@ -64,11 +52,15 @@ class TelemetrySnapshot:
     roll_deg: Optional[float] = None
     timestamp: float = 0.0
     position_source: str = "none"
+    altitude_source: str = "none"
     attitude_source: str = "none"
     lat_deg: Optional[float] = None
     lon_deg: Optional[float] = None
     alt_m: Optional[float] = None
     rel_alt_m: Optional[float] = None
+    vfr_alt_m: Optional[float] = None
+    vfr_rel_alt_m: Optional[float] = None
+    local_up_m: Optional[float] = None
 
     def has_pose(self) -> bool:
         return (
@@ -91,21 +83,7 @@ class TelemetrySnapshot:
 
 
 class MavlinkTelemetry:
-    """Background MAVLink reader that maintains the latest vehicle pose.
-
-    The class is intentionally small and dependency-light. It only requires
-    pymavlink and the existing Vivi geometry classes.
-
-    Typical use in main.py:
-
-        telemetry = MavlinkTelemetry("udpin:127.0.0.1:14550")
-        telemetry.connect()
-        telemetry.start()
-        pose = telemetry.wait_for_pose(timeout_s=10)
-
-    The capture-point and target-marking code can then call get_pose() instead
-    of asking the operator to manually type coordinates.
-    """
+    """Background MAVLink reader that maintains the latest vehicle pose."""
 
     def __init__(self, connection_string: str = "udpin:127.0.0.1:14550"):
         self.connection_string = connection_string
@@ -115,6 +93,7 @@ class MavlinkTelemetry:
         self._stop_event = Event()
         self._thread: Optional[Thread] = None
         self._gps_frame: Optional[LocalFrame] = None
+        self._vfr_alt0_m: Optional[float] = None
 
     def connect(self, wait_heartbeat: bool = True, timeout_s: int = 30) -> None:
         """Open MAVLink connection and optionally wait for heartbeat."""
@@ -171,7 +150,8 @@ class MavlinkTelemetry:
         snapshot = self.get_snapshot()
         raise TimeoutError(
             "Timed out waiting for complete telemetry pose. "
-            f"position_source={snapshot.position_source}, attitude_source={snapshot.attitude_source}"
+            f"position_source={snapshot.position_source}, altitude_source={snapshot.altitude_source}, "
+            f"attitude_source={snapshot.attitude_source}"
         )
 
     def print_pose(self) -> None:
@@ -180,7 +160,8 @@ class MavlinkTelemetry:
         if not snapshot.has_pose():
             print(
                 "Pose not ready: "
-                f"position_source={snapshot.position_source}, attitude_source={snapshot.attitude_source}"
+                f"position_source={snapshot.position_source}, altitude_source={snapshot.altitude_source}, "
+                f"attitude_source={snapshot.attitude_source}"
             )
             return
         pose = snapshot.to_pose()
@@ -192,7 +173,7 @@ class MavlinkTelemetry:
             f"yaw={pose.yaw_deg:.1f} deg, "
             f"pitch={pose.pitch_deg:.1f} deg, "
             f"roll={pose.roll_deg:.1f} deg "
-            f"[{snapshot.position_source}, {snapshot.attitude_source}]"
+            f"[xy={snapshot.position_source}, z={snapshot.altitude_source}, attitude={snapshot.attitude_source}]"
         )
 
     def _reader_loop(self) -> None:
@@ -214,11 +195,31 @@ class MavlinkTelemetry:
         elif msg_type == "LOCAL_POSITION_NED":
             self._update_local_position_ned(msg)
         elif msg_type == "GLOBAL_POSITION_INT":
-            # Fallback position if LOCAL_POSITION_NED is not available.
             self._update_global_position_int(msg)
         elif msg_type == "VFR_HUD":
-            # Fallback yaw only. ATTITUDE is preferred.
             self._update_vfr_hud(msg)
+
+    def _best_up_locked(self, local_up: Optional[float] = None) -> tuple[float, str]:
+        """Return the best current vertical value and its source."""
+        if self._snapshot.rel_alt_m is not None:
+            return float(self._snapshot.rel_alt_m), "GLOBAL_POSITION_INT.relative_alt"
+        if self._snapshot.vfr_rel_alt_m is not None:
+            return float(self._snapshot.vfr_rel_alt_m), "VFR_HUD.alt_relative"
+        if local_up is not None:
+            return float(local_up), "LOCAL_POSITION_NED.z"
+        if self._snapshot.local_up_m is not None:
+            return float(self._snapshot.local_up_m), "LOCAL_POSITION_NED.z"
+        return 0.0, "unknown_zero_fallback"
+
+    def _replace_position_z_locked(self) -> None:
+        """Refresh only z if a better altitude source arrived after xy."""
+        if self._snapshot.position_enu is None:
+            return
+        up, altitude_source = self._best_up_locked()
+        pos = self._snapshot.position_enu
+        self._snapshot.position_enu = Vec3(pos.x, pos.y, up)
+        self._snapshot.altitude_source = altitude_source
+        self._snapshot.timestamp = time.time()
 
     def _update_attitude(self, msg) -> None:
         # MAVLink ATTITUDE angles are radians.
@@ -237,11 +238,14 @@ class MavlinkTelemetry:
         # LOCAL_POSITION_NED: x=north, y=east, z=down.
         east = float(msg.y)
         north = float(msg.x)
-        up = -float(msg.z)
+        local_up = -float(msg.z)
         with self._lock:
+            self._snapshot.local_up_m = local_up
+            up, altitude_source = self._best_up_locked(local_up=local_up)
             self._snapshot.position_enu = Vec3(east, north, up)
             self._snapshot.timestamp = time.time()
             self._snapshot.position_source = "LOCAL_POSITION_NED"
+            self._snapshot.altitude_source = altitude_source
 
     def _update_global_position_int(self, msg) -> None:
         # GLOBAL_POSITION_INT: lat/lon are degE7, alt/relative_alt are millimetres.
@@ -250,32 +254,44 @@ class MavlinkTelemetry:
         alt_m = float(msg.alt) / 1000.0
         rel_alt_m = float(msg.relative_alt) / 1000.0
 
-        # If LOCAL_POSITION_NED is already available, keep it as the primary
-        # position source. GPS fallback is mainly for vehicles/configurations that
-        # do not stream LOCAL_POSITION_NED.
         with self._lock:
             self._snapshot.lat_deg = lat_deg
             self._snapshot.lon_deg = lon_deg
             self._snapshot.alt_m = alt_m
             self._snapshot.rel_alt_m = rel_alt_m
 
-            if self._snapshot.position_source == "LOCAL_POSITION_NED":
-                return
-
             if self._gps_frame is None:
                 self._gps_frame = LocalFrame(lat0_deg=lat_deg, lon0_deg=lon_deg, alt0_m=alt_m)
 
+            # If LOCAL_POSITION_NED already provides good xy, only replace z.
+            # This is the key fix for real tests where LOCAL_POSITION_NED.z stayed
+            # at zero but GLOBAL_POSITION_INT.relative_alt changed correctly.
+            if self._snapshot.position_source == "LOCAL_POSITION_NED" and self._snapshot.position_enu is not None:
+                self._replace_position_z_locked()
+                return
+
             pos = self._gps_frame.lla_to_enu(lat_deg, lon_deg, alt_m)
-            # Prefer relative_alt for up if available because it is more intuitive
-            # for local mission geometry than MSL altitude.
-            pos = Vec3(pos.x, pos.y, rel_alt_m)
-            self._snapshot.position_enu = pos
+            self._snapshot.position_enu = Vec3(pos.x, pos.y, rel_alt_m)
             self._snapshot.timestamp = time.time()
             self._snapshot.position_source = "GLOBAL_POSITION_INT"
+            self._snapshot.altitude_source = "GLOBAL_POSITION_INT.relative_alt"
 
     def _update_vfr_hud(self, msg) -> None:
         # VFR_HUD.heading is degrees. Use only if ATTITUDE has not arrived.
+        alt_m = float(msg.alt)
+        if self._vfr_alt0_m is None:
+            self._vfr_alt0_m = alt_m
+        vfr_rel_alt_m = alt_m - self._vfr_alt0_m
+
         with self._lock:
+            self._snapshot.vfr_alt_m = alt_m
+            self._snapshot.vfr_rel_alt_m = vfr_rel_alt_m
+
+            # Use VFR altitude as a backup only when GLOBAL relative altitude has
+            # not arrived. Keep LOCAL/GPS xy unchanged.
+            if self._snapshot.rel_alt_m is None:
+                self._replace_position_z_locked()
+
             if self._snapshot.attitude_source != "ATTITUDE":
                 self._snapshot.yaw_deg = float(msg.heading) % 360.0
                 self._snapshot.pitch_deg = self._snapshot.pitch_deg if self._snapshot.pitch_deg is not None else 0.0

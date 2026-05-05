@@ -33,9 +33,10 @@ if __package__ is None or __package__ == "":
     __package__ = "integration.pipelines.vivi"
 
 import argparse
-import time
 from pathlib import Path
+from typing import Optional
 
+from .constants import ALLOWED_COLOURS
 from .detection import TargetEvent, detect, mark_target
 from .modes import CameraMode
 from .pose import CameraConfig, Pose
@@ -43,6 +44,64 @@ from .report import parse
 from .survey import setup
 from .telemetry import MavlinkTelemetry
 from .vector import Vec3
+
+
+# -----------------------------------------------------------------------------
+# Input helpers: field script should not crash on bad operator input
+# -----------------------------------------------------------------------------
+
+def prompt_text(prompt: str, *, default: Optional[str] = None, allow_empty: bool = False) -> str:
+    """Prompt until a usable string is entered."""
+    while True:
+        raw = input(prompt).strip()
+        if raw:
+            return raw
+        if default is not None:
+            return default
+        if allow_empty:
+            return ""
+        print("Input cannot be empty. Please enter a value.")
+
+
+def prompt_float(prompt: str, *, default: Optional[float] = None, min_value: Optional[float] = None) -> float:
+    """Prompt until a valid float is entered."""
+    while True:
+        raw = input(prompt).strip()
+        if not raw and default is not None:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            print("Please enter a number, for example 3 or 3.0.")
+            continue
+        if min_value is not None and value < min_value:
+            print(f"Please enter a value greater than or equal to {min_value}.")
+            continue
+        return value
+
+
+def prompt_yes_no(prompt: str, *, default: bool = True) -> bool:
+    """Prompt for y/n without raising on invalid input."""
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    while True:
+        raw = input(prompt + suffix).strip().lower()
+        if not raw:
+            return default
+        if raw in {"y", "yes"}:
+            return True
+        if raw in {"n", "no"}:
+            return False
+        print("Please answer y or n.")
+
+
+def prompt_colour() -> str:
+    """Prompt until the target colour is one of the allowed Task 1 colours."""
+    allowed = "/".join(sorted(ALLOWED_COLOURS))
+    while True:
+        colour = input(f"Detected target colour [{allowed}]: ").strip().lower()
+        if colour in ALLOWED_COLOURS:
+            return colour
+        print(f"Invalid colour. Allowed colours: {', '.join(sorted(ALLOWED_COLOURS))}.")
 
 
 # -----------------------------------------------------------------------------
@@ -54,7 +113,7 @@ from .vector import Vec3
 # -----------------------------------------------------------------------------
 
 def manual_detector(frame=None) -> str:
-    return input("Detected target colour [black/white/red/yellow/blue/green]: ").strip().lower()
+    return prompt_colour()
 
 
 # -----------------------------------------------------------------------------
@@ -62,13 +121,14 @@ def manual_detector(frame=None) -> str:
 # -----------------------------------------------------------------------------
 
 def get_current_pose(telemetry: MavlinkTelemetry) -> Pose:
-    """Return the latest MAVLink-derived Pose.
-
-    This replaces the earlier manual x/y/z/yaw/pitch/roll input. If it times out,
-    it means MAVProxy/Mission Planner is not forwarding the required messages or
-    the connection string is wrong.
-    """
-    return telemetry.wait_for_pose(timeout_s=3.0)
+    """Return the latest MAVLink-derived Pose, retrying instead of crashing."""
+    while True:
+        try:
+            return telemetry.wait_for_pose(timeout_s=3.0)
+        except Exception as exc:
+            print(f"Telemetry pose is not ready: {exc}")
+            print("Check Mission Planner/MAVProxy forwarding and the connection string.")
+            input("Press Enter to retry pose capture...")
 
 
 def capture_point(name: str, telemetry: MavlinkTelemetry) -> Vec3:
@@ -79,16 +139,19 @@ def capture_point(name: str, telemetry: MavlinkTelemetry) -> Vec3:
         2. Programmer presses Enter.
         3. This function records the current automatic x/y/z from telemetry.
     """
-    print(f"\nCapture point: {name}")
-    print("Position Vivi at this point, then press Enter.")
-    input("Ready to capture? ")
-    pose = get_current_pose(telemetry)
-    print(
-        f"Captured {name}: "
-        f"east={pose.position.x:.2f}, north={pose.position.y:.2f}, up={pose.position.z:.2f}, "
-        f"yaw={pose.yaw_deg:.1f}, pitch={pose.pitch_deg:.1f}, roll={pose.roll_deg:.1f}"
-    )
-    return pose.position
+    while True:
+        print(f"\nCapture point: {name}")
+        print("Position Vivi at this point, then press Enter.")
+        input("Ready to capture? ")
+        pose = get_current_pose(telemetry)
+        print(
+            f"Captured {name}: "
+            f"east={pose.position.x:.2f}, north={pose.position.y:.2f}, up={pose.position.z:.2f}, "
+            f"yaw={pose.yaw_deg:.1f}, pitch={pose.pitch_deg:.1f}, roll={pose.roll_deg:.1f}"
+        )
+        if prompt_yes_no("Keep this point?", default=True):
+            return pose.position
+        print("Point rejected. Capture it again.")
 
 
 # -----------------------------------------------------------------------------
@@ -97,52 +160,62 @@ def capture_point(name: str, telemetry: MavlinkTelemetry) -> Vec3:
 
 def run_setup(telemetry: MavlinkTelemetry):
     """Run the scene survey using MAVLink-derived coordinates."""
-    print("\n=== SETUP / SURVEY ===")
-    print("Capture building corners in this order:")
-    print("  A = shared corner")
-    print("  B = adjacent corner along one wall")
-    print("  C = adjacent corner along perpendicular wall")
-    print("A, B, and C must not be collinear.")
+    while True:
+        print("\n=== SETUP / SURVEY ===")
+        print("Capture building corners in this order:")
+        print("  A = shared corner")
+        print("  B = adjacent corner along one wall")
+        print("  C = adjacent corner along perpendicular wall")
+        print("A, B, and C must not be collinear.")
+        print("")
+        print("Door workflow:")
+        print("  Capture only the TOP TWO door-frame corners.")
+        print("  The bottom two door corners are assumed to be on the ground.")
 
-    building_height_m = float(input("\nBuilding height [m]: "))
+        building_height_m = prompt_float("\nBuilding height [m]: ", min_value=0.1)
 
-    A = capture_point("Building corner A, shared corner", telemetry)
-    B = capture_point("Building corner B, adjacent to A", telemetry)
-    C = capture_point("Building corner C, adjacent to A", telemetry)
+        A = capture_point("Building corner A, shared corner", telemetry)
+        B = capture_point("Building corner B, adjacent to A", telemetry)
+        C = capture_point("Building corner C, adjacent to A", telemetry)
 
-    door_count_text = input("\nHow many door-frame corners will you capture? [3 or 4, default 3]: ").strip()
-    door_count = int(door_count_text or "3")
-    if door_count < 3:
-        raise ValueError("At least 3 door-frame corners are required.")
-    if door_count > 4:
-        print("More than 4 was entered; capturing 4 door-frame corners.")
-        door_count = 4
+        door_points: list[Vec3] = []
+        if prompt_yes_no("Capture a door reference for this building?", default=True):
+            door_points.append(capture_point("Door TOP corner 1", telemetry))
+            door_points.append(capture_point("Door TOP corner 2", telemetry))
 
-    door_points: list[Vec3] = []
-    for i in range(door_count):
-        door_points.append(capture_point(f"Door-frame corner {i + 1}", telemetry))
+        try:
+            model = setup(
+                building_corners=[A, B, C],
+                building_height_m=building_height_m,
+                door_top_corners=door_points or None,
+                save_model_path="vivi_building_model_debug.json",
+            )
+        except Exception as exc:
+            print(f"Setup could not build a valid model: {exc}")
+            print("Please re-capture the setup points.")
+            continue
 
-    model = setup(
-        building_corners=[A, B, C],
-        building_height_m=building_height_m,
-        door_corners=door_points,
-        save_model_path="vivi_building_model_debug.json",
-    )
+        print("\nSetup complete.")
+        print("Detected wall faces:")
+        for wall in model.walls:
+            door_status = "with door" if wall.door is not None else "no door"
+            print(f"  - {wall.name} face, outward heading {wall.heading_deg:.1f} deg, {door_status}")
+            if wall.door is not None:
+                print(
+                    f"      door: top={wall.door.top_z:.2f} m above ground, "
+                    f"width={abs(wall.door.right_u - wall.door.left_u):.2f} m"
+                )
 
-    print("\nSetup complete.")
-    print("Detected wall faces:")
-    for wall in model.walls:
-        door_status = "with door" if wall.door is not None else "no door"
-        print(f"  - {wall.name} face, heading {wall.heading_deg:.1f} deg, {door_status}")
-
-    return model
+        if prompt_yes_no("Keep this setup model?", default=True):
+            return model
+        print("Setup rejected. Starting setup again.")
 
 
 # -----------------------------------------------------------------------------
 # Target marking orchestration
 # -----------------------------------------------------------------------------
 
-def run_target_search(model, telemetry: MavlinkTelemetry) -> list[TargetEvent]:
+def run_target_search(model, telemetry: MavlinkTelemetry) -> Optional[list[TargetEvent]]:
     """Main operator loop for marking targets.
 
     Because detect() currently returns only colour, the target must be centred in
@@ -187,17 +260,22 @@ def run_target_search(model, telemetry: MavlinkTelemetry) -> list[TargetEvent]:
             print("3. FRONT mode will automatically choose the wall using Vivi heading and wall-plane intersections.")
             input("Press Enter when target is centred... ")
 
-            # Replace frame=None with the real camera frame when CV is integrated.
-            frame = None
-            colour = detect(frame, detector=manual_detector)
-            pose = get_current_pose(telemetry)
+            try:
+                # Replace frame=None with the real camera frame when CV is integrated.
+                frame = None
+                colour = detect(frame, detector=manual_detector)
+                pose = get_current_pose(telemetry)
+                event = mark_target(
+                    colour=colour,
+                    camera_mode=camera_mode,
+                    pose=pose,
+                    selected_face=None,
+                )
+            except Exception as exc:
+                print(f"Target was not marked: {exc}")
+                print("Please correct the input and try marking the target again.")
+                continue
 
-            event = mark_target(
-                colour=colour,
-                camera_mode=camera_mode,
-                pose=pose,
-                selected_face=None,  # wall face is selected automatically during localization
-            )
             target_events.append(event)
 
             print(
@@ -217,10 +295,11 @@ def run_target_search(model, telemetry: MavlinkTelemetry) -> list[TargetEvent]:
             return target_events
 
         elif cmd == "q":
-            raise SystemExit("Quit without writing report.")
+            print("Quit selected. No report will be written.")
+            return None
 
         else:
-            print("Unknown command.")
+            print("Unknown command. Please enter f, d, m, v, u, p, or q.")
 
 
 # -----------------------------------------------------------------------------
@@ -236,38 +315,51 @@ def main() -> None:
 
     print("Vivi Task 1 Target Localization Orchestrator")
 
-    team_name = args.team or input("Team name for output file: ").strip() or "Valiant_Aerotech"
+    team_name = args.team or prompt_text("Team name for output file: ", default="Valiant_Aerotech")
     if args.camera_offset_cm is None:
-        camera_offset_cm = float(input("Camera vertical offset below GPS/autopilot [cm]: ") or "10")
+        camera_offset_cm = prompt_float("Camera vertical offset below GPS/autopilot [cm, default 10]: ", default=10.0, min_value=0.0)
     else:
         camera_offset_cm = args.camera_offset_cm
 
     camera = CameraConfig(offset_body_m=Vec3(0.0, 0.0, -camera_offset_cm / 100.0))
 
     telemetry = MavlinkTelemetry(args.connection)
-    telemetry.connect(wait_heartbeat=True)
-    telemetry.start()
-
-    print("Waiting for first complete pose...")
-    first_pose = telemetry.wait_for_pose(timeout_s=10.0)
-    print(
-        "Telemetry pose ready: "
-        f"east={first_pose.position.x:.2f}, north={first_pose.position.y:.2f}, up={first_pose.position.z:.2f}, "
-        f"yaw={first_pose.yaw_deg:.1f}, pitch={first_pose.pitch_deg:.1f}, roll={first_pose.roll_deg:.1f}"
-    )
+    try:
+        telemetry.connect(wait_heartbeat=True)
+        telemetry.start()
+    except Exception as exc:
+        print(f"Could not start MAVLink telemetry: {exc}")
+        print("Fix the connection or dependency issue, then run the script again.")
+        return
 
     try:
+        print("Waiting for first complete pose...")
+        first_pose = get_current_pose(telemetry)
+        print(
+            "Telemetry pose ready: "
+            f"east={first_pose.position.x:.2f}, north={first_pose.position.y:.2f}, up={first_pose.position.z:.2f}, "
+            f"yaw={first_pose.yaw_deg:.1f}, pitch={first_pose.pitch_deg:.1f}, roll={first_pose.roll_deg:.1f}"
+        )
+
         model = run_setup(telemetry)
         target_events = run_target_search(model, telemetry)
+        if target_events is None:
+            return
 
-        output_path = parse(
-            events=target_events,
-            model=model,
-            team_name=team_name,
-            output_dir=Path("."),
-            camera=camera,
-            include_debug_comments=True,
-        )
+        while True:
+            try:
+                output_path = parse(
+                    events=target_events,
+                    model=model,
+                    team_name=team_name,
+                    output_dir=Path("."),
+                    camera=camera,
+                    include_debug_comments=True,
+                )
+                break
+            except Exception as exc:
+                print(f"Report could not be written: {exc}")
+                team_name = prompt_text("Re-enter team name for output file: ", default="Valiant_Aerotech")
 
         print("\nReport written:")
         print(output_path)

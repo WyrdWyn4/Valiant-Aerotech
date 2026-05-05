@@ -1,132 +1,58 @@
 # Vivi Task 1 Pipeline
 
-This folder contains the Vivi target-localization and reporting pipeline for AEAC Task 1.
+## Quick Version
 
-Vivi uses MAVLink telemetry, a surveyed building model, camera mode, and target colour detection to generate the required `Task_1_<team_name>_targets.txt` report.
+Vivi turns live MAVLink pose data and a quick building survey into the required Task 1 target-location report.
 
----
-
-## Files
-
-```text
-integration/pipelines/vivi/
-├── __init__.py
-├── constants.py       # allowed target colours and shared constants
-├── demo.py            # synthetic demo without MAVLink
-├── detection.py       # detect() and mark_target()
-├── frames.py          # local GPS-to-ENU helper
-├── geometry.py        # yaw/pitch/roll and camera-ray geometry
-├── localization.py    # target projection onto wall/ground
-├── main.py            # run this file for field operation
-├── model.py           # BuildingModel, WallPlane, DoorReference
-├── modes.py           # CameraMode enum
-├── pose.py            # Pose and CameraConfig
-├── report.py          # parse() report writer
-├── survey.py          # setup()/survey() model creation
-├── telemetry.py       # MAVLink telemetry reader
-└── vector.py          # Vec3 helper
-```
-
----
-
-## Run
-
-From the project root:
+Run it from the repo root:
 
 ```powershell
-cd C:\Users\walee\OneDrive\Desktop\Projects\Valiant-Aerotech
-& c:\python314\python.exe .\integration\pipelines\vivi\main.py
+python .\integration\pipelines\vivi\main.py --connection udpin:127.0.0.1:14550 --team "Valiant Aerotech"
 ```
 
-With options:
+During setup, capture:
 
-```powershell
-& c:\python314\python.exe .\integration\pipelines\vivi\main.py --connection udpin:127.0.0.1:14550 --team "Valiant Aerotech" --camera-offset-cm 10
-```
+1. Three adjacent building corners: `A`, `B`, `C`
+2. The top two door-frame corners, if a useful door is visible
+3. Each target after centring it in the active camera view
 
----
-
-## MAVLink input
-
-Default connection:
+The output is:
 
 ```text
-udpin:127.0.0.1:14550
+Task_1_<team_name>_targets.txt
 ```
 
-Messages used:
+Review the file before uploading it to Google Drive at the end of the flight window.
 
-```text
-LOCAL_POSITION_NED  -> position
-ATTITUDE            -> yaw, pitch, roll
-GLOBAL_POSITION_INT -> fallback position
-VFR_HUD             -> fallback heading
-```
+## Details
 
-Internal coordinate frame:
+### What The Pipeline Does
 
-```text
-x = east
-y = north
-z = up
-```
+Vivi creates a local model of the building, names the four wall faces, projects each marked target onto a wall or the ground, and writes firefighter-readable descriptions.
 
-MAVLink NED is converted as:
+The report should describe targets using landmarks such as walls, corners, ground distance, and the door. It should not use GPS coordinates or raw local coordinate triples.
 
-```text
-east  = y_ned
-north = x_ned
-up    = -z_ned
-```
+### Field Workflow
 
----
-
-## Field steps
-
-1. Start Mission Planner/MAVProxy and confirm Vivi telemetry is being forwarded.
-2. Run `main.py`.
-3. Enter team name, camera offset, and building height.
-4. Capture building corners:
+1. Start Mission Planner or MAVProxy.
+2. Forward MAVLink to `udpin:127.0.0.1:14550`.
+3. Run `main.py`.
+4. Enter team name, camera offset, and building height.
+5. Capture the three building corners in order:
 
 ```text
 A = shared corner
 B = adjacent corner along one wall
-C = adjacent corner along perpendicular wall
+C = adjacent corner along the perpendicular wall
 ```
 
-5. Capture any 3 or 4 door-frame corners.
-6. Enter target-search mode.
-7. Select camera mode:
+6. Capture the top two door corners. The bottom of the door is assumed to be on the ground.
+7. Use `f` or `d` to set front/down camera mode.
+8. Centre the target in the camera view.
+9. Press `m` and enter the target colour.
+10. Press `p` to write the report.
 
-```text
-f = front camera
-d = down camera
-```
-
-8. Centre the target in the selected camera view.
-9. Press:
-
-```text
-m
-```
-
-10. Enter or allow detection of target colour.
-11. Repeat for all targets.
-12. Press:
-
-```text
-p
-```
-
-13. Review the generated file in:
-
-```text
-logs/Task_1_<team_name>_targets.txt
-```
-
----
-
-## Operator commands
+### Operator Commands
 
 ```text
 f = front camera mode
@@ -138,30 +64,46 @@ p = parse/write report
 q = quit without writing
 ```
 
-Wall face selection for the front camera is automatic. The system chooses the wall by intersecting the front-camera ray with the surveyed wall planes.
-
----
-
-## Important operating rule
-
-`detect()` currently returns only colour. Therefore, before pressing `m`, the operator must centre the target in the camera view.
-
-If `detect()` later returns a target pixel centre, this requirement can be relaxed.
-
----
-
-## Output
-
-The final report is written to:
+### MAVLink Data Used
 
 ```text
-logs/Task_1_<team_name>_targets.txt
+LOCAL_POSITION_NED  -> horizontal position
+GLOBAL_POSITION_INT -> preferred relative altitude
+VFR_HUD             -> backup relative altitude and heading
+ATTITUDE            -> yaw, pitch, roll
 ```
 
-Example:
+Internal coordinates are ENU:
 
 ```text
-logs/Task_1_Valiant_Aerotech_targets.txt
+x = east
+y = north
+z = up
 ```
 
-The report uses landmark-based language and avoids raw GPS or coordinate triples.
+### ConOps Rules To Remember
+
+- Task 1 targets are coloured circles: black, white, red, yellow, blue, or green.
+- Locations must be clear in 3D space.
+- Distances should only imply decimetre accuracy.
+- GPS and raw coordinate triples are not acceptable in the final report.
+- The building GPS point is only a locator, not a corner, centre, or wall reference.
+
+### File Map
+
+```text
+main.py          field operator script
+telemetry.py     MAVLink reader and altitude fallback logic
+survey.py        building and door survey setup
+model.py         wall, door, and building model objects
+localization.py  target projection onto wall/ground
+report.py        Task 1 text report writer
+detection.py     detector hook and manual colour fallback
+demo.py          synthetic demo without MAVLink
+```
+
+### Important Limitations
+
+- `detect()` currently only returns a colour, so the target must be centred before pressing `m`.
+- The trained YOLO `.pt` model still needs a small adapter before automatic detection is complete.
+- Debug or review lines should be removed before official upload if they appear in the generated report.

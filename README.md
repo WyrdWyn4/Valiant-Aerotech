@@ -1,39 +1,79 @@
-# Valiant Aerotech
-End-to-end stack for autonomous UAV missions in one place:
-- Planning
-- Integration
-- Actuation
+# Valiant Aerotech Codebase
 
-This repo keeps the three teams decoupled via versioned contracts while sharing tooling, tests, and CI.
+## Quick Version
 
-<div align="center">
+This repo holds the software used for the AEAC 2026 flight tasks.
 
-[![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/WyrdWyn4/Valiant-Aerotech?include_prereleases)](https://img.shields.io/github/v/release/WyrdWyn4/Valiant-Aerotech?include_prereleases)
-[![GitHub last commit](https://img.shields.io/github/last-commit/WyrdWyn4/Valiant-Aerotech)](https://img.shields.io/github/last-commit/WyrdWyn4/Valiant-Aerotech)
-[![GitHub issues](https://img.shields.io/github/issues-raw/WyrdWyn4/Valiant-Aerotech)](https://img.shields.io/github/issues-raw/WyrdWyn4/Valiant-Aerotech)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/WyrdWyn4/Valiant-Aerotech)](https://img.shields.io/github/issues-pr/WyrdWyn4/Valiant-Aerotech)
-[![GitHub](https://img.shields.io/github/license/WyrdWyn4/Valiant-Aerotech)](https://img.shields.io/github/license/WyrdWyn4/Valiant-Aerotech)
+The active competition code is mainly in:
 
-</div>
+- `integration/pipelines/vivi`: Task 1 target localization report
+- `integration/pipelines/vion`: Task 2 extinguished-target photo capture
+- `_tools`: field utilities, including Vivi camera-servo calibration
+- `actuation`: ArduPilot and mission-planner support files
+- `planning`: mission notes, templates, and research material
 
-# People
-Our team consists of students from diverse backgrounds, including mechanical, electrical, and software engineering.
+For field testing, start with the README inside the pipeline you are using.
 
-<div align="center">
+## Current Field Priorities
 
-## Executive Team
+1. Verify the Vivi telemetry stream before flight.
+2. Re-check the camera servo calibration on the real transmitter/receiver pair.
+3. Use Vivi to generate `Task_1_<team_name>_targets.txt`.
+4. Use Vion to capture Task 2 proof photos.
+5. Review every generated file before upload.
 
-| <img src="./_media/_img/_people/Mohammed%20Awad.png" height="120"><br>[Mohammed Awad](https://www.linkedin.com/in/mohammad-mamoun-awad/)<br>**President**
+## Team
+
+Valiant Aerotech is built by students across software, electrical, and mechanical systems.
+
+### Executive
+
+| <img src="./_media/_img/_people/Mohammed%20Awad.png" height="120"><br>Mohammed Awad<br>President |
+|:---:|
+
+### Leads
+
+| <img src="./_media/_img/_people/Waleed%20Mannan%20Khan%20Sherwani.png" height="120"><br>Waleed Mannan Khan Sherwani<br>Software Team Lead | <img src="./_media/_img/_people/Mirza%20Taimur%20Ali%20Baig.jpg" height="120"><br>Mirza Taimur Ali Baig<br>Electrical Team Lead |
 |:---:|:---:|
 
-## Team Leads
+### Software Team
 
-| <img src="./_media/_img/_people/Waleed%20Mannan%20Khan%20Sherwani.png" height="120"><br>[Waleed Mannan Khan Sherwani](https://www.linkedin.com/in/wmksherwani/)<br>**Software Team Lead** | <img src="./_media/_img/_people/Mirza%20Taimur%20Ali%20Baig.jpg" height="120"><br>[BMirza Taimur Ali Baig]<br>**Electrical Team Lead** |
+| <img src="./_media/_img/_people/Rohan%20Torul.png" height="120"><br>Rohan Torul<br>Senior Member | <img src="./_media/_img/_people/Devansh%20Dalal.jpg" height="120"><br>Devansh Dalal<br>Senior Member | <img src="./_media/_img/_people/Mohammad%20Rakin.jpg" height="120"><br>Mohammad Rakin Kibria<br>Senior Member |
 |:---:|:---:|:---:|
 
-## Software Team
+## Details
 
-| <img src="./_media/_img/_people/Rohan%20Torul.png" height="120"><br>[Rohan Torul](https://www.linkedin.com/in/rohan-k-torul/)<br>**Senior Member** | <img src="./_media/_img/_people/Devansh%20Dalal.jpg" height="120"><br>[Devansh Dalal](https://www.linkedin.com/in/devansh-dalal/)<br>**Senior Member** | <img src="./_media/_img/_people/Mohammad%20Rakin.jpg" height="120"><br>[Mohammad Rakin Kibria](https://www.linkedin.com/in/rakin-kibria-443417290/)<br>**Senior Member**
-|:---:|:---:|:---:|
+### Task 1: Vivi Reconnaissance
 
-</div>
+Vivi builds a local 3D model of the fire building, marks targets using MAVLink pose data, and writes the required Task 1 text report.
+
+The report must be landmark-relative, not raw GPS or coordinate triples. The ConOps only allows decimetre-level precision, so the code rounds reported distances to 0.1 m.
+
+### Task 2: Vion Extinguishing
+
+Vion is the support tool for saving photos of extinguished targets. The ConOps requires photos to be submitted to the team Google Drive folder with names like:
+
+```text
+Task_2_<team_name>_target_<target#>.jpg
+```
+
+### Repository Map
+
+```text
+_docs/                 project documentation
+_media/                images and competition documents
+_missions/             shared mission files
+_tools/                utility scripts for field setup
+actuation/             vehicle-side scripts and Mission Planner notes
+integration/configs/   local configuration templates
+integration/data/      input data captured or collected by tools
+integration/exports/   generated outputs ready for review/upload
+integration/pipelines/ runnable task pipelines
+planning/              mission planning and research
+```
+
+### Notes For Future Work
+
+- The YOLO detector adapter still needs to be connected to Vivi's `detect(frame, detector=...)` hook.
+- Google Drive upload support is not present in this branch.
+- Do not rely on the building GPS point as a wall, centre, or corner. The ConOps says it is only a locator for finding the building.

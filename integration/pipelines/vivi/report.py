@@ -7,6 +7,8 @@ from typing import List, Optional, Sequence
 
 from .detection import TargetEvent
 from .localization import LocalizedTarget, TargetLocalizer
+from .modes import CameraMode
+from .vector import Vec3
 from .model import BuildingModel
 from .pose import CameraConfig
 
@@ -76,7 +78,23 @@ def parse(
 
     localized: List[LocalizedTarget] = []
     for i, event in enumerate(events, start=1):
-        localized.append(localizer.localize_event(event, target_id=i))
+        try:
+            localized.append(localizer.localize_event(event, target_id=i))
+        except Exception as exc:
+            # Do not crash at the end of a flight window. Keep the target in the
+            # report with a review warning so the team can manually fix the line
+            # instead of losing the whole file.
+            localized.append(
+                LocalizedTarget(
+                    target_id=i,
+                    colour=event.colour.capitalize(),
+                    camera_mode=event.camera_mode if isinstance(event.camera_mode, CameraMode) else CameraMode.FRONT,
+                    surface="unknown",
+                    location_text="Localization failed. Review this target manually before upload.",
+                    point_local=event.pose.position if event.pose is not None else Vec3(0.0, 0.0, 0.0),
+                    warnings=[f"Localization error: {exc}"],
+                )
+            )
 
     lines: List[str] = []
     lines.append(f"Task 1 Target Localization Report - {team_name}")
