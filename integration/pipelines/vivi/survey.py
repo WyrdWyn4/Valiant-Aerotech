@@ -2,26 +2,43 @@
 
 from __future__ import annotations
 
+from itertools import permutations
 from pathlib import Path
 from typing import Optional, Sequence
 import json
 
-from .geometry import bearing_from_vector, cardinal_from_bearing
+from .geometry import bearing_from_vector, clamp_angle_360
 from .model import BuildingModel, WallPlane
 from .vector import Vec3
 
 
+_CARDINAL_BEARINGS: dict[str, float] = {
+    "north": 0.0,
+    "east": 90.0,
+    "south": 180.0,
+    "west": 270.0,
+}
+
+
+def _angle_error_deg(a: float, b: float) -> float:
+    """Smallest absolute difference between two compass bearings."""
+    return abs((clamp_angle_360(a - b + 180.0) - 180.0))
+
+
 def _make_wall(p0: Vec3, p1: Vec3, centre: Vec3, height_m: float) -> WallPlane:
-    """Create one wall from a bottom edge and building centre."""
+    """Create one wall from a bottom edge and building centre.
+
+    The name is assigned later by _assign_unique_cardinal_names(). That avoids
+    duplicate or wrong face labels when the building is rotated relative to north.
+    """
     edge_mid = (p0 + p1) * 0.5
 
     # Outward normal points from the building centre through the wall midpoint.
     normal = (edge_mid - centre).horizontal().normalized()
     heading = bearing_from_vector(normal)
-    face_name = cardinal_from_bearing(heading)
 
     return WallPlane(
-        name=face_name,
+        name="unassigned",
         p0=Vec3(p0.x, p0.y, 0.0),
         p1=Vec3(p1.x, p1.y, 0.0),
         normal=normal,
@@ -30,11 +47,45 @@ def _make_wall(p0: Vec3, p1: Vec3, centre: Vec3, height_m: float) -> WallPlane:
     )
 
 
+def _assign_unique_cardinal_names(walls: Sequence[WallPlane]) -> None:
+    """Name each wall by the closest unique cardinal direction.
+
+    This implements the field rule we actually want:
+    - the face whose outward normal is closest to north is the north face;
+    - the face closest to east is the east face;
+    - the remaining faces are assigned south/west in the same way.
+
+    Doing this as a global assignment is safer than thresholding each wall
+    independently, because thresholding can create duplicate labels on rotated
+    buildings or near 45-degree cases.
+    """
+    if len(walls) != 4:
+        for i, wall in enumerate(walls, start=1):
+            wall.name = f"face_{i}"
+        return
+
+    cardinal_names = list(_CARDINAL_BEARINGS.keys())
+    best_assignment: tuple[float, tuple[str, ...]] | None = None
+
+    for candidate_names in permutations(cardinal_names):
+        total_error = sum(
+            _angle_error_deg(wall.heading_deg, _CARDINAL_BEARINGS[name])
+            for wall, name in zip(walls, candidate_names)
+        )
+        if best_assignment is None or total_error < best_assignment[0]:
+            best_assignment = (total_error, candidate_names)
+
+    assert best_assignment is not None
+    for wall, name in zip(walls, best_assignment[1]):
+        wall.name = name
+
+
 def survey(
     building_corners: Sequence[Vec3],
     building_height_m: float,
-    door_corners: Optional[Sequence[Vec3]] = None,
+    door_top_corners: Optional[Sequence[Vec3]] = None,
     *,
+    door_corners: Optional[Sequence[Vec3]] = None,
     ground_z: Optional[float] = None,
     save_model_path: Optional[str | Path] = None,
 ) -> BuildingModel:
@@ -43,27 +94,25 @@ def survey(
     Parameters
     ----------
     building_corners:
-        Exactly three adjacent building corners: A, B, C.
-        A must be the shared corner; B and C must be adjacent to A along the two
-        wall directions. The fourth corner is generated as D = B + C - A.
-
-        This is why three corners are enough for the rectangular building model:
-        two adjacent edges define orientation, and the dimensions are represented
-        by the measured/captured edge lengths. If the official dimensions are
-        known and you want to force them, capture the corners at the correct
-        ends or scale B/C before calling survey().
+        Exactly three adjacent building corners: A, B, C. A must be the shared
+        corner; B and C must be adjacent to A along the two wall directions. The
+        fourth corner is generated as D = B + C - A.
 
     building_height_m:
         Height used to validate wall targets and produce height descriptions.
 
+    door_top_corners:
+        Preferred door input for field use. Capture only the two top door-frame
+        corners. The bottom two door corners are assumed to be on the ground.
+
     door_corners:
-        Any three or four door-frame corner points. The code uses them to build a
-        door reference on the nearest wall. If omitted, reports will use corners
-        only.
+        Backward-compatible older input. If supplied, the same function accepts
+        two or more points and derives the door reference from their u/z ranges.
 
     ground_z:
-        Local ground height. If omitted, uses the average z of the three captured
-        building corners.
+        Local ground height in the MAVLink/ENU frame. If omitted, assumes 0.0 m.
+        This is correct when relative altitude is measured from the takeoff/ground
+        level and building/door points are captured by flying to their height.
 
     save_model_path:
         Optional JSON file path to store the survey result for review/debugging.
@@ -75,7 +124,7 @@ def survey(
 
     A, B, C = building_corners
     if ground_z is None:
-        ground_z = (A.z + B.z + C.z) / 3.0
+        ground_z = 0.0
 
     # Flatten building corners to the chosen ground plane. Wall targets still use
     # the vehicle/camera z for height, but the footprint itself should sit on the
@@ -101,17 +150,7 @@ def survey(
         _make_wall(D, C, centre, building_height_m),
         _make_wall(C, A, centre, building_height_m),
     ]
-
-    # Guard against duplicate face names. Duplicate names usually mean the three
-    # corners were captured in the wrong order, the building is highly diagonal,
-    # or the cardinal naming is too coarse. We keep the model but make names
-    # unique so wall lookup remains stable.
-    seen: dict[str, int] = {}
-    for wall in walls:
-        count = seen.get(wall.name, 0)
-        seen[wall.name] = count + 1
-        if count:
-            wall.name = f"{wall.name}_{count + 1}"
+    _assign_unique_cardinal_names(walls)
 
     model = BuildingModel(
         corners=corners,
@@ -120,8 +159,11 @@ def survey(
         walls=walls,
     )
 
-    if door_corners is not None:
-        model.attach_door_from_points(door_corners)
+    # New preferred field workflow: capture only top two door corners. Keep the
+    # old parameter name as a compatibility fallback.
+    door_points = door_top_corners if door_top_corners is not None else door_corners
+    if door_points is not None:
+        model.attach_door_from_points(door_points, assume_bottom_on_ground=True)
 
     if save_model_path is not None:
         Path(save_model_path).write_text(json.dumps(model.to_json_dict(), indent=2), encoding="utf-8")
