@@ -119,10 +119,11 @@ class WallPlane:
         return d1, self.endpoint_label(self.p1)
 
     def best_horizontal_reference(self, u: float) -> Tuple[str, float, str]:
-        """Choose nearest useful horizontal reference: door centre or corner.
+        """Choose the clearest horizontal reference: door first when useful.
 
-        For a wall target, the relevant horizontal references are the door centre
-        on that face and the nearest face corner.
+        The door is a stronger landmark than a generic corner when the target is
+        near it, even if a corner is technically a little closer. This makes the
+        final wording match what a firefighter would actually use on scene.
         """
         corner_dist, corner_label = self.nearest_corner_reference(u)
         best_kind = "corner"
@@ -130,15 +131,25 @@ class WallPlane:
         best_phrase = f"{round_dm(corner_dist):.1f} m from the {corner_label}"
 
         if self.door is not None:
+            door_width = max(0.01, abs(self.door.right_u - self.door.left_u))
             door_dist = abs(u - self.door.center_u)
-            if door_dist < best_dist:
-                side = "right" if u > self.door.center_u else "left"
+
+            if self.door.left_u <= u <= self.door.right_u:
                 best_kind = "door"
-                best_dist = door_dist
-                best_phrase = (
-                    f"{round_dm(door_dist):.1f} m {side} of the door centre "
-                    f"when facing the wall from outside"
-                )
+                best_dist = 0.0
+                best_phrase = "horizontally aligned with the door opening"
+            else:
+                side = "right" if u > self.door.center_u else "left"
+                # Prefer the door when the target is within about one door width
+                # of the door centre, or when it is not materially worse than the
+                # nearest corner. This avoids ignoring the door in reports.
+                if door_dist <= max(door_width, corner_dist + 0.5):
+                    best_kind = "door"
+                    best_dist = door_dist
+                    best_phrase = (
+                        f"{round_dm(door_dist):.1f} m {side} of the door centre "
+                        f"when facing the wall from outside"
+                    )
 
         return best_kind, best_dist, best_phrase
 
@@ -223,15 +234,24 @@ class BuildingModel:
         candidates = sorted(self.walls, key=lambda w: ray_h.dot(w.normal))
         return candidates[0] if candidates else None
 
-    def attach_door_from_points(self, door_points: Sequence[Vec3]) -> None:
-        """Attach a door reference to the nearest wall using any 3 or 4 frame points.
+    def attach_door_from_points(
+        self,
+        door_points: Sequence[Vec3],
+        *,
+        assume_bottom_on_ground: bool = True,
+    ) -> None:
+        """Attach a door reference to the nearest wall.
 
-        We only need the door's wall-local u-range and z-range. With any three
-        frame corners, min/max in u and z can estimate centre, left/right,
-        bottom/top well enough for reporting.
+        Field workflow: capture only the two top door-frame corners. The bottom
+        two corners are assumed to be on the ground plane. The older workflow of
+        supplying three or four door-frame points is still accepted.
+
+        The model only needs the door's wall-local horizontal span and height so
+        it can use phrases like "right of the door" or "above the door" in the
+        final report.
         """
-        if len(door_points) < 3:
-            raise ValueError("At least three door-frame points are required.")
+        if len(door_points) < 2:
+            raise ValueError("At least the two top door-frame corners are required.")
 
         avg = Vec3(
             sum(p.x for p in door_points) / len(door_points),
@@ -244,8 +264,13 @@ class BuildingModel:
 
         left_u = min(u_values)
         right_u = max(u_values)
-        bottom_z = min(z_values)
-        top_z = max(z_values)
+        if assume_bottom_on_ground and len(door_points) == 2:
+            bottom_z = 0.0
+            top_z = sum(z_values) / len(z_values)
+        else:
+            bottom_z = min(z_values)
+            top_z = max(z_values)
+
         wall.door = DoorReference(
             face_name=wall.name,
             center_u=0.5 * (left_u + right_u),
