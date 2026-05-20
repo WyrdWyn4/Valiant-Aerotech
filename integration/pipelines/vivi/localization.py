@@ -48,14 +48,23 @@ class TargetLocalizer:
         cam_pos = camera_position_world(pose, self.camera)
         ray = camera_centre_ray_world(pose, self.camera, CameraMode.FRONT)
 
-        # If the operator selects a face, trust it. This reduces wrong wall
-        # selection when the drone is near a corner or looking diagonally.
+        # If the operator selects a face, try it, but never crash during field use.
+        # Otherwise choose the wall using ray-plane geometry. Wall names are already
+        # assigned by closest cardinal direction during setup().
         if event.selected_face:
-            wall = self.model.wall_by_name(event.selected_face)
+            try:
+                wall = self.model.wall_by_name(event.selected_face)
+            except Exception:
+                warnings.append(
+                    f"Selected face {event.selected_face!r} was not found; used automatic wall selection."
+                )
+                wall = self.model.front_facing_wall(ray, origin=cam_pos)
         else:
             wall = self.model.front_facing_wall(ray, origin=cam_pos)
-            if wall is None:
-                raise RuntimeError("No wall model available for front-camera localization.")
+
+        if wall is None:
+            warnings.append("No front-facing wall could be selected; used nearest wall fallback.")
+            wall = self.model.nearest_wall_to_ground_point(cam_pos)
 
         hit = wall.intersect_ray(cam_pos, ray)
         if hit is None:
@@ -81,13 +90,19 @@ class TargetLocalizer:
             warnings.append("Projected wall target is above building height; review pitch/altitude/camera offset.")
 
         u = wall.u_of(point)
-        _, _, ref_phrase = wall.best_horizontal_reference(u)
+        ref_kind, _, ref_phrase = wall.best_horizontal_reference(u)
 
         # Height is always included for wall targets because a wall location with
-        # no height is ambiguous in 3D.
+        # no height is ambiguous in 3D. Include a door-height cue when the door is
+        # the chosen reference and the target is vertically above the door frame.
+        door_height_phrase = ""
+        if ref_kind == "door" and wall.door is not None and height_m > wall.door.top_z:
+            door_height_phrase = f", about {round_dm(height_m - wall.door.top_z):.1f} m above the top of the door"
+
         location = (
             f"On the {wall.name} face of the building, approximately "
-            f"{round_dm(max(0.0, height_m)):.1f} m above ground and {ref_phrase}."
+            f"{round_dm(max(0.0, height_m)):.1f} m above ground and {ref_phrase}"
+            f"{door_height_phrase}."
         )
 
         return LocalizedTarget(

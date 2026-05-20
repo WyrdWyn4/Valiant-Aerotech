@@ -1,0 +1,14 @@
+{
+  "servo_channel": 9,
+  "rc_source": "RC11 (dial S1)",
+  "pwm_down": 1519,
+  "pwm_front": 1987,
+  "pwm_threshold": 1753,
+  "separation_us": 468,
+  "down_stdev": 64.3,
+  "front_stdev": 33.71,
+  "down_sample_count": 30,
+  "front_sample_count": 30,
+  "calibrated_at": "2026-05-03T15:43:56-0230",
+  "connection": "udpin:127.0.0.1:14550"
+}
