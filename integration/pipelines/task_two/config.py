@@ -36,12 +36,13 @@ LOCK_DURATION_S = 1.5     # hold centered for this long before firing
 LOCK_TIMEOUT_S = 10       # abort aim phase if can't achieve lock
 
 # ─── Water Trigger ────────────────────────────────────────────────────────────
-SHOOT_METHOD = "GPIO"     # "GPIO" or "MAVLINK_SERVO"
+SHOOT_METHOD = "MAVLINK_SERVO"     # "GPIO" (RPi5 BCM) or "MAVLINK_SERVO" (GCS/MAVLink)
 GPIO_SHOOT_PIN = 18       # BCM pin number on RPi5
 MAVLINK_SHOOT_CHANNEL = 10  # servo channel if using MAVLink method
 SHOOT_DURATION_S = 2.0    # how long to run pump / open valve
 
 # ─── Photo & Upload ──────────────────────────────────────────────────────────
+TEAM_NAME = "ValiantAerotech"  # Team name used for file formatting in competition
 GDRIVE_CONFIG_PATH = "integration/configs/gdrive_config.json"
 PHOTO_SAVE_DIR = "task2_photos"
 UPLOAD_TIMEOUT_S = 15     # max wait for upload before continuing

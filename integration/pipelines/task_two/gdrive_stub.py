@@ -12,6 +12,9 @@ import os
 import shutil
 
 
+from .config import TEAM_NAME
+
+
 class DriveUploader:
     """Stub uploader — saves photos locally and logs a warning."""
 
@@ -29,10 +32,10 @@ class DriveUploader:
         In the real implementation this would push to Google Drive.
         Returns True so the state machine considers it successful.
         """
-        dest_name = f"Task2ValiantAerotechTarget{target_number}.jpg"
+        dest_name = f"Task_2_{TEAM_NAME}_target_{target_number}.jpg"
         dest_dir = os.path.join(os.path.dirname(local_path) or ".", "uploaded")
         os.makedirs(dest_dir, exist_ok=True)
         dest_path = os.path.join(dest_dir, dest_name)
         shutil.copy2(local_path, dest_path)
-        print(f"[GDRIVE STUB] Copied → {dest_path}  (real upload not implemented)")
+        print(f"[GDRIVE STUB] Copied → {dest_path} (real upload not implemented)")
         return True

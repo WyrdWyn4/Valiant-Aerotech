@@ -141,7 +141,7 @@ class GCSAutoExtinguisher:
         self.detector = YOLODetector()
         
         if CameraOrientationReader:
-            self.cam_reader = CameraOrientationReader(self.master)
+            self.cam_reader = CameraOrientationReader(self.master, request_stream=False)
         else:
             self.cam_reader = None
 
@@ -155,6 +155,7 @@ class GCSAutoExtinguisher:
         self.state_start_time = time.time()
         
         self.last_hud_alert_time = 0
+        self.target_counter = 0
 
     def send_hud_message(self, message: str, severity=mavutil.mavlink.MAV_SEVERITY_INFO):
         """Broadcasts a STATUSTEXT message over MAVLink so it appears on Mission Planner UI/Goggles."""
@@ -172,8 +173,8 @@ class GCSAutoExtinguisher:
 
     def is_camera_looking_down(self):
         if self.cam_reader:
-            self.cam_reader.update()
-            return self.cam_reader.get_orientation() == 'DOWN'
+            orientation = self.cam_reader.get_camera_orientation_nonblocking()
+            return orientation == 'DOWN' or orientation == 'UNKNOWN'
         return True # Default assume ground target if reader missing
 
     def loop(self):
@@ -302,25 +303,28 @@ class GCSAutoExtinguisher:
                     print("Saving confirmation photo (from GCS capture)...")
                     if self.last_shot_frame is not None:
                         os.makedirs(PHOTO_SAVE_DIR, exist_ok=True)
-                        ts = time.strftime("%Y%m%d_%H%M%S")
-                        photo_path = os.path.join(PHOTO_SAVE_DIR, f"task2_confirm_{ts}.jpg")
+                        self.target_counter += 1
+                        photo_name = f"Task_2_{TEAM_NAME}_target_{self.target_counter}.jpg"
+                        photo_path = os.path.join(PHOTO_SAVE_DIR, photo_name)
                         cv2.imwrite(photo_path, self.last_shot_frame)
                         print(f"Saved: {photo_path}")
                         self.upload_file_path = photo_path
                         self.set_state(STATE_UPLOADING)
                     else:
                         print("ERROR: No frame to save!")
-                        self.set_state(STATE_COMPLETE)
+                        self.set_state(STATE_SEARCHING)
 
                 elif self.state == STATE_UPLOADING:
                     print("Uploading to Drive...")
                     if hasattr(self, 'upload_file_path'):
-                        self.uploader.upload_task2_photo(self.upload_file_path, 1)
-                    self.set_state(STATE_COMPLETE)
-
-                elif self.state == STATE_COMPLETE:
-                    print("Task Two Sequence Complete.")
-                    break
+                        self.uploader.upload_task2_photo(self.upload_file_path, self.target_counter)
+                    
+                    # Reset target tracking state and search for next target
+                    self.lock_start_time = None
+                    self.last_seen_time = 0
+                    self.frames_without_target = 0
+                    self.last_shot_frame = None
+                    self.set_state(STATE_SEARCHING)
 
         except KeyboardInterrupt:
             print("\nAborted by user.")
