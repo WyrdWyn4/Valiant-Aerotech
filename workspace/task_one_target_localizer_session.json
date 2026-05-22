@@ -1,0 +1,79 @@
+{
+  "team_name": "Valiant_Aerotech",
+  "building_length_m": 50.0,
+  "building_width_m": 100.0,
+  "building_height_m": 10.0,
+  "north_south_face_span_source": "width",
+  "screenshots": [
+    {
+      "id": "0e73c3b6-6066-4870-aced-50326b660b5f",
+      "image_path": "workspace\\screenshots\\clipboard_capture_20260518_194909.png",
+      "created_at_utc": "2026-05-18T22:19:09+00:00",
+      "face_direction": "North",
+      "wall_width_m": 100.0,
+      "wall_height_m": 10.0,
+      "calibration_mode": "Partial wall boundary lines",
+      "calibration": {
+        "corners_tl_tr_br_bl": [],
+        "top_boundary": {
+          "start": [
+            581.6023738872403,
+            74.77744807121661
+          ],
+          "end": [
+            759.6439169139466,
+            137.6854599406528
+          ]
+        },
+        "right_boundary": {
+          "start": [
+            760.8308605341246,
+            137.6854599406528
+          ],
+          "end": [
+            772.700296735905,
+            631.454005934718
+          ]
+        },
+        "bottom_boundary": {
+          "start": [
+            586.3501483679524,
+            626.7062314540059
+          ],
+          "end": [
+            767.9525222551928,
+            635.0148367952522
+          ]
+        },
+        "left_boundary": {
+          "start": [
+            581.6023738872403,
+            71.21661721068249
+          ],
+          "end": [
+            586.3501483679524,
+            626.7062314540059
+          ]
+        },
+        "approximate_reference_edge": null,
+        "approximate_reference_edge_side": "left"
+      },
+      "door": {
+        "corners_tl_tr_br_bl": [],
+        "left_edge": null,
+        "right_edge": null
+      },
+      "draft_circle": {
+        "center": [
+          712.1661721068248,
+          352.5222551928784
+        ],
+        "radius_px": 40.84190037765045
+      }
+    }
+  ],
+  "targets": [],
+  "workspace_dir": "workspace",
+  "output_txt_path": "Task_1_Valiant_Aerotech_targets.txt",
+  "session_json_path": "task_one_target_localizer_session.json"
+}
